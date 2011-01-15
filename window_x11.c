@@ -23,6 +23,8 @@
 **--------------------------------------------------------------------------
 */
 
+#define USE_XFT 0
+
 /*
 **  -------------
 **  Include Files
@@ -37,9 +39,13 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
+#if USE_XFT
+#include <X11/Xft/Xft.h>
+#endif
 #include "const.h"
 #include "types.h"
 #include "proto.h"
+
 
 /*
 **  -----------------
@@ -94,18 +100,31 @@ static i16 currentY;
 static u16 oldCurrentY;
 static DispList display[ListSize];
 static u32 listEnd;
+#if USE_XFT
+static XftDraw *xftd;
+static XftColor xftc_fg;
+static XftColor xftc_bg;
+static XftFont *xft_font_small;
+static XftFont *xft_font_medium;
+static XftFont *xft_font_large;
+static XftFont *current_xft_font;
+#else
 static Font hSmallFont;
 static Font hMediumFont;
 static Font hLargeFont;
+#endif
 static int width;
 static int height;
 static bool refresh = FALSE;
 static pthread_mutex_t mutexDisplay;
 static Display *disp;
 static Window window;
+static Pixmap pixmap;
+static GC gc;
 static u8 *lpClipToKeyboard = NULL;
 static u8 *lpClipToKeyboardPtr = NULL;
 static u8 clipToKeyboardDelay = 0;
+
 
 /*
 **--------------------------------------------------------------------------
@@ -287,6 +306,16 @@ void windowTerminate(void)
 **--------------------------------------------------------------------------
 */
 
+static void DrawString (int x, int y, char *buf, int len)
+{
+#if USE_XFT
+  XftDrawString8 (xftd, & xftc_fg, current_xft_font, x, y, buf, len);
+#else
+  XDrawString (disp, pixmap, gc, x, y, buf, len);
+#endif
+}
+
+
 /*--------------------------------------------------------------------------
 **  Purpose:        Windows thread.
 **
@@ -297,10 +326,8 @@ void windowTerminate(void)
 **------------------------------------------------------------------------*/
 void *windowThread(void *param)
     {
-    GC gc;
     KeySym key;
     KeySym modList[2];
-    Pixmap pixmap;
     XEvent event;
     XWMHints wmhints;
     int screen, depth;
@@ -372,21 +399,55 @@ void *windowThread(void *param)
     XSetGraphicsExposures(disp, gc, FALSE);
 
     /*
-    **  Load three Cyber fonts.
+    **  Get window attributes, necessary for colormap, 
     */
-    hSmallFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-10-*-*-*-*-*-*-*\0");
-    hMediumFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-14-*-*-*-*-*-*-*\0");
-    hLargeFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-24-*-*-*-*-*-*-*\0");
+    XGetWindowAttributes(disp,window,&a);
+
+#if USE_XFT
+    /*
+    **  Create an XftDraw structure for font rendering
+    */
+    xftd = XftDrawCreate (disp, pixmap, a.visual, a.colormap);
+#endif
 
     /*
     **  Setup fore- and back-ground colors.
     */
-    XGetWindowAttributes(disp,window,&a);
     XAllocNamedColor(disp, a.colormap,"green",&b,&c);
     fg=b.pixel;
     bg = BlackPixel(disp, screen);
     XSetBackground(disp, gc, bg);
     XSetForeground(disp, gc, fg);
+
+#if USE_XFT
+    /*
+    **  Setup fore- and back-ground colors for Xft.
+    */
+    if (! XftColorAllocName (disp, a.visual, a.colormap, "green", & xftc_fg))
+      {
+        fprintf (stderr, "XftColorAllocName() for green failed\n");
+        exit (2);
+      }
+
+    if (! XftColorAllocName (disp, a.visual, a.colormap, "black", & xftc_bg))
+      {
+        fprintf (stderr, "XftColorAllocName() for black failed\n");
+        exit (2);
+      }
+#endif
+
+    /*
+    **  Load three Cyber fonts.
+    */
+#if USE_XFT
+    xft_font_small  = XftFontOpenName (disp, screen, "monospace-10");
+    xft_font_medium = XftFontOpenName (disp, screen, "monospace-14");
+    xft_font_large  = XftFontOpenName (disp, screen, "monospace-24");
+#else
+    hSmallFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-10-*-*-*-*-*-*-*\0");
+    hMediumFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-14-*-*-*-*-*-*-*\0");
+    hLargeFont = XLoadFont(disp, "-*-lucidatypewriter-medium-*-*-*-24-*-*-*-*-*-*-*\0");
+#endif
 
     /*
     **  Create mappings of some ALT-key combinations to strings.
@@ -652,7 +713,11 @@ void *windowThread(void *param)
         */
         XSetForeground (disp, gc, fg);
 
+#if USE_XFT
+        current_xft_font = xft_font_small;
+#else
         XSetFont(disp, gc, hSmallFont);
+#endif
         oldFont = FontSmall;
 
 #if CcCycleTime
@@ -661,7 +726,7 @@ void *windowThread(void *param)
         char buf[80];
 
         sprintf(buf, "Cycle time: %.3f", cycleTime);
-        XDrawString(disp, pixmap, gc, 0, 10, buf, strlen(buf));
+        DrawString (0, 10, buf, strlen (buf));
         }
 #endif
 
@@ -692,7 +757,7 @@ void *windowThread(void *param)
             (traceMask >> 14) & 1 ? 'C' : '_',
             (traceMask >> 15) & 1 ? 'E' : '_');
 
-        XDrawString(disp, pixmap, gc, 0, 10, buf, strlen(buf));
+        DrawString (0, 10, buf, strlen (buf));
         }
 #endif
 
@@ -702,9 +767,13 @@ void *windowThread(void *param)
             **  Display pause message.
             */
             static char opMessage[] = "Emulation paused";
+#if USE_XFT
+            current_xft_font = xft_font_large;
+#else
             XSetFont(disp, gc, hLargeFont);
+#endif
             oldFont = FontLarge;
-            XDrawString(disp, pixmap, gc, 20, 256, opMessage, strlen(opMessage));
+            DrawString(20, 256, opMessage, strlen(opMessage));
             }
 
         /*
@@ -719,10 +788,14 @@ void *windowThread(void *param)
             */
             static char usageMessage1[] = "Please don't just close the window, but instead first cleanly halt the operating system and";
             static char usageMessage2[] = "then use the 'shutdown' command in the operator interface to terminate the emulation.";
+#if USE_XFT == 0
             XSetFont(disp, gc, hMediumFont);
+#else
+            current_xft_font = xft_font_medium;
+#endif
             oldFont = FontMedium;
-            XDrawString(disp, pixmap, gc, 20, 256, usageMessage1, strlen(usageMessage1));
-            XDrawString(disp, pixmap, gc, 20, 275, usageMessage2, strlen(usageMessage2));
+            DrawString(20, 256, usageMessage1, strlen(usageMessage1));
+            DrawString(20, 275, usageMessage2, strlen(usageMessage2));
             listEnd = 0;
             usageDisplayCount -= 1;
             }
@@ -745,15 +818,27 @@ void *windowThread(void *param)
                 switch (oldFont)
                     {
                 case FontSmall:
+#if USE_XFT == 0
                     XSetFont(disp, gc, hSmallFont);
+#else
+                    current_xft_font = xft_font_small;
+#endif
                     break;
 
                 case FontMedium:
+#if USE_XFT == 0
                     XSetFont(disp, gc, hMediumFont);
+#else
+                    current_xft_font = xft_font_medium;
+#endif
                     break;
 
                 case FontLarge:
+#if USE_XFT == 0
                     XSetFont(disp, gc, hLargeFont);
+#else
+                    current_xft_font = xft_font_large;
+#endif
                     break;
                     }
                 }
@@ -768,7 +853,7 @@ void *windowThread(void *param)
             else
                 {
                 str[0] = curr->ch;
-                XDrawString(disp, pixmap, gc, curr->xPos, (curr->yPos * 14) / 10 + 20, str, 1);
+                DrawString (curr->xPos, (curr->yPos * 14) / 10 + 20, str, 1);
                 }
             }
 
@@ -805,6 +890,11 @@ void *windowThread(void *param)
         }
 
     XSync(disp, 0);
+#if USE_XFT
+    XftColorFree (disp, a.visual, a.colormap, & xftc_fg);
+    XftColorFree (disp, a.visual, a.colormap, & xftc_bg);
+    XftDrawDestroy (xftd);
+#endif
     XFreeGC (disp, gc);
     XFreePixmap (disp, pixmap);
     XDestroyWindow (disp, window);

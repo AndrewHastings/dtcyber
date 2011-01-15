@@ -22,9 +22,11 @@
 #
 #--------------------------------------------------------------------------
 
-LIBS    = -lm -lX11 -lpthread
+LIBS    = -lm -lX11 -lpthread -lXft -lfreetype
+#LIBS    = -lm -lX11 -lpthread
 LDFLAGS = -s -L/usr/X11R6/lib
-INCL    = -I/usr/X11R6/include
+INCL    = -I/usr/X11R6/include -I/usr/include/freetype2
+#INCL    = -I/usr/X11R6/include
 
 CFLAGS  = -O2 -I. $(INCL) -std=gnu99
 
