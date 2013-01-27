@@ -21,7 +21,13 @@
 **  If not, see <http://www.gnu.org/licenses/gpl-3.0.txt>.
 **
 **--------------------------------------------------------------------------
+* History
+*  Date      Description                                           Who
+*  --------- ----------------------------------------------------- ---
+*  18JAN2013 Added 'Alt-F' full screen mode support                DRST
 */
+
+#define FULLSCREEN /* define to enable the ALT-F full screen mode toggle */
 
 /*
 **  -------------
@@ -287,6 +293,36 @@ void windowTerminate(void)
 **--------------------------------------------------------------------------
 */
 
+#ifdef FULLSCREEN
+/*
+ * Go into/out of full screen mode
+ */
+#define _NET_WM_STATE_REMOVE	0
+#define _NET_WM_STATE_ADD	1
+
+static int ToggleFullScreen(Display *dpy, Window win)
+{
+	XEvent		xev;
+	Atom		wm_state	= XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom		fullscreen	= XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	static char	active 		= 0;	/* current state of the toggle */
+
+	memset(&xev, 0, sizeof(xev));
+	xev.type			= ClientMessage;
+	xev.xclient.window		= win;
+	xev.xclient.message_type	= wm_state;
+	xev.xclient.format		= 32;
+	xev.xclient.data.l[0]		= active? _NET_WM_STATE_ADD : _NET_WM_STATE_REMOVE;
+	xev.xclient.data.l[1]		= fullscreen;
+	xev.xclient.data.l[2]		= 0;
+
+	active = active? 0 : 1;
+
+	XSendEvent(dpy, DefaultRootWindow(dpy), False, SubstructureNotifyMask, &xev);
+	return(0);
+}
+#endif /* FULLSCREEN */
+
 /*--------------------------------------------------------------------------
 **  Purpose:        Windows thread.
 **
@@ -410,7 +446,11 @@ void *windowThread(void *param)
     XRebindKeysym(disp, 'X', modList, 1, (u8 *)"$x", 2);
     XRebindKeysym(disp, 'p', modList, 1, (u8 *)"$p", 2);
     XRebindKeysym(disp, 'P', modList, 1, (u8 *)"$p", 2);
-
+#ifdef FULLSCREEN
+    /* full screen mode */
+    XRebindKeysym(disp, 'F', modList, 1, (u8 *)"$f", 2);
+    XRebindKeysym(disp, 'f', modList, 1, (u8 *)"$f", 2);
+#endif
     /*
     **  Initialise input.
     */
@@ -562,6 +602,12 @@ void *windowThread(void *param)
                         traceMask ^= (1 << 15);
                         break;
 
+#ifdef FULLSCREEN
+                    case 'f':
+                        ToggleFullScreen(disp, window);
+			break;
+
+#endif /* FULLSCREEN */
                     case 'x':
                         if (traceMask == 0)
                             {
